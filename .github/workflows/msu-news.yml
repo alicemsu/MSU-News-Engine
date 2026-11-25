@@ -40,385 +40,325 @@ jobs:
           from difflib import SequenceMatcher
           import requests
           import feedparser
-
           from pathlib import Path
           from bs4 import BeautifulSoup
           from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit, parse_qsl
           from googlenewsdecoder import gnewsdecoder
-
           webhook = os.environ["DISCORD_WEBHOOK_URL"]
           if not webhook:
-              raise SystemExit("Missing Discord secret")
-
+            raise SystemExit("Missing Discord secret")
           state = Path("published.json")
           seen = set(json.loads(state.read_text())) if state.exists() else set()
           limit = 3
           max_attempts = 10
-
           session = requests.Session()
           session.headers["User-Agent"] = "MSU-News-Engine/1.3"
-
           keywords = [
-              "metal slug", "neo geo", "neogeo", "fbneo", "finalburn neo", "fightcade",
-              "メタルスラッグ", "ネオジオ", "合金弹头", "合金彈頭", "메탈슬러그", "메탈 슬러그",
-              "ميتال سلغ", "ميتال سلاج", "ميتال سلاغ", "ميتال سلق",
-              "เมทัลสลัก", "เมทัล สลัก", "метал слаг",
-              "rambo lùn",
+            "metal slug", "neo geo", "neogeo", "fbneo", "finalburn neo", "fightcade",
+            "メタルスラッグ", "ネオジオ", "合金弹头", "合金彈頭", "메탈슬러그", "메탈 슬러그",
+            "ميتال سلغ", "ميتال سلاج", "ميتال سلاغ", "ميتال سلق",
+            "เมทัลสลัก", "เมทัล สลัก", "метал слаг",
+            "rambo lùn",
           ]
-          # Search terms are intentionally narrow: SNK alone is too ambiguous.
           base = '"Metal Slug" OR "Neo Geo" OR "Fightcade" OR "FBNeo" OR "FinalBurn Neo"'
           regions = {
-              "en": (base + ' OR (SNK (licensing OR acquisition OR partnership))', "en-US", "US", "US:en"),
-              "es": (base, "es-419", "MX", "MX:es-419"),
-              "ja": (base + ' OR "メタルスラッグ" OR "ネオジオ"', "ja", "JP", "JP:ja"),
-              "zh-CN": (base + ' OR "合金弹头"', "zh-CN", "CN", "CN:zh-Hans"),
-              "zh-TW": (base + ' OR "合金彈頭"', "zh-TW", "TW", "TW:zh-Hant"),
-              "ko": (base + ' OR "메탈슬러그" OR "메탈 슬러그"', "ko", "KR", "KR:ko"),
-              "ar": (base + ' OR "ميتال سلغ" OR "ميتال سلاج" OR "ميتال سلاغ" OR (SNK (السعودية OR استحواذ OR ترخيص OR شراكة))', "ar", "SA", "SA:ar"),
-              "pt": (base, "pt-BR", "BR", "BR:pt-419"),
-              "fr": (base, "fr", "FR", "FR:fr"),
-              "th": (base + ' OR "เมทัลสลัก" OR "เมทัล สลัก"', "th", "TH", "TH:th"),
-              "vi": (base + ' OR "Rambo lùn"', "vi", "VN", "VN:vi"),
-              "id": (base, "id", "ID", "ID:id"),
-              "ru": (base + ' OR "Метал Слаг"', "ru", "RU", "RU:ru"),
-              "de": (base, "de", "DE", "DE:de"),
-              "it": (base, "it", "IT", "IT:it"),
+            "en": (base + ' OR (SNK (licensing OR acquisition OR partnership))', "en-US", "US", "US:en"),
+            "es": (base, "es-419", "MX", "MX:es-419"),
+            "ja": (base + ' OR "メタルスラッグ" OR "ネオジオ"', "ja", "JP", "JP:ja"),
+            "zh-CN": (base + ' OR "合金弹头"', "zh-CN", "CN", "CN:zh-Hans"),
+            "zh-TW": (base + ' OR "合金彈頭"', "zh-TW", "TW", "TW:zh-Hant"),
+            "ko": (base + ' OR "메탈슬러그" OR "메탈 슬러그"', "ko", "KR", "KR:ko"),
+            "ar": (base + ' OR "ميتال سلغ" OR "ميتال سلاج" OR "ميتال سلاغ" OR (SNK (السعودية OR استحواذ OR ترخيص OR شراكة))', "ar", "SA", "SA:ar"),
+            "pt": (base, "pt-BR", "BR", "BR:pt-419"),
+            "fr": (base, "fr", "FR", "FR:fr"),
+            "th": (base + ' OR "เมทัลสลัก" OR "เมทัล สลัก"', "th", "TH", "TH:th"),
+            "vi": (base + ' OR "Rambo lùn"', "vi", "VN", "VN:vi"),
+            "id": (base, "id", "ID", "ID:id"),
+            "ru": (base + ' OR "Метал Слаг"', "ru", "RU", "RU:ru"),
+            "de": (base, "de", "DE", "DE:de"),
+            "it": (base, "it", "IT", "IT:it"),
           }
-          # Five batches: all 15 editions in five successful scheduled cycles.
-          # Extra English/Japanese checks reflect their priority for the project.
           groups = [
-              ("en", "ja", "es"),
-              ("zh-CN", "zh-TW", "ko", "en"),
-              ("ar", "pt", "fr", "ja"),
-              ("th", "vi", "id", "en"),
-              ("ru", "de", "it", "ja"),
+            ("en", "ja", "es"),
+            ("zh-CN", "zh-TW", "ko", "en"),
+            ("ar", "pt", "fr", "ja"),
+            ("th", "vi", "id", "en"),
+            ("ru", "de", "it", "ja"),
           ]
           control_path = Path("news_control.json")
           control = json.loads(control_path.read_text()) if control_path.exists() else {}
           slot = int(control.get("next_group", 0)) % len(groups)
-
           def save_control():
-              control_path.write_text(json.dumps(control, indent=2))
-
+            control_path.write_text(json.dumps(control, indent=2))
           def google_backoff():
-              # Leave a gap rather than retrying a rate-limited service immediately.
-              control["google_pause_until"] = time.time() + 3600
-              save_control()
-
+            control["google_pause_until"] = time.time() + 3600
+            save_control()
           feeds = [
-              ("Gematsu", "https://www.gematsu.com/feed", False),
-              ("Time Extension", "https://www.timeextension.com/feeds/news", False),
-              ("Game*Spark", "https://www.gamespark.jp/rss20/index.rdf", False),
-              ("Bahamut GNN", "https://gnn.gamer.com.tw/rss_utf8.xml", False),
-              ("Ruliweb", "https://bbs.ruliweb.com/news/rss", False),
-              ("Adrenaline", "https://www.adrenaline.com.br/feed/", False),
+            ("Gematsu", "https://www.gematsu.com/feed", False),
+            ("Time Extension", "https://www.timeextension.com/feeds/news", False),
+            ("Game*Spark", "https://www.gamespark.jp/rss20/index.rdf", False),
+            ("Bahamut GNN", "https://gnn.gamer.com.tw/rss_utf8.xml", False),
+            ("Ruliweb", "https://bbs.ruliweb.com/news/rss", False),
+            ("Adrenaline", "https://www.adrenaline.com.br/feed/", False),
           ]
           if time.time() >= float(control.get("google_pause_until", 0)):
-              print("Google batch:", slot + 1, ", ".join(groups[slot]))
-              for lang in groups[slot]:
-                  query, hl, gl, ceid = regions[lang]
-                  url = "https://news.google.com/rss/search?" + urlencode({
-                      "q": "(" + query + ") when:2d", "hl": hl, "gl": gl, "ceid": ceid
-                  })
-                  feeds.append(("Google News " + lang, url, True))
-              control["next_group"] = (slot + 1) % len(groups)
-              save_control()
+            print("Google batch:", slot + 1, ", ".join(groups[slot]))
+            for lang in groups[slot]:
+              query, hl, gl, ceid = regions[lang]
+              url = "https://news.google.com/rss/search?" + urlencode({
+                "q": "(" + query + ") when:2d", "hl": hl, "gl": gl, "ceid": ceid
+              })
+              feeds.append(("Google News " + lang, url, True))
+            control["next_group"] = (slot + 1) % len(groups)
+            save_control()
           else:
-              print("Google cooldown active; using direct feeds only")
-
+            print("Google cooldown active; using direct feeds only")
           def clean(value):
-              return BeautifulSoup(value or "", "html.parser").get_text(" ", strip=True)
-
+            return BeautifulSoup(value or "", "html.parser").get_text(" ", strip=True)
           def fingerprint(value):
-              value = re.sub(r"[^\w]+", "", value.casefold())
-              return hashlib.sha256(value.encode()).hexdigest()
-
+            value = re.sub(r"[^\w]+", "", value.casefold())
+            return hashlib.sha256(value.encode()).hexdigest()
           def is_google(url):
-              return (urlsplit(url).hostname or "").lower() == "news.google.com"
-
+            return (urlsplit(url).hostname or "").lower() == "news.google.com"
           def public_url(url):
-              p = urlsplit(url)
-              return p.scheme in ("http", "https") and bool(p.hostname) and not p.username and not p.password
-
+            p = urlsplit(url)
+            return p.scheme in ("http", "https") and bool(p.hostname) and not p.username and not p.password
           def canonical(url):
-              p = urlsplit(url)
-              query = urlencode([(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
-                                 if not k.lower().startswith("utm_") and k.lower() not in ("fbclid", "gclid")])
-              return urlunsplit((p.scheme, p.netloc.lower(), p.path.rstrip("/"), query, ""))
-
+            p = urlsplit(url)
+            query = urlencode([(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+                       if not k.lower().startswith("utm_") and k.lower() not in ("fbclid", "gclid")])
+            return urlunsplit((p.scheme, p.netloc.lower(), p.path.rstrip("/"), query, ""))
           def useful_summary(summary, title, publisher):
-              a, b = fingerprint(summary), fingerprint(title)
-              normalized = re.sub(r"[^\w]+", "", summary.casefold())
-              headline = re.sub(r"[^\w]+", "", title.casefold())
-              source = re.sub(r"[^\w]+", "", publisher.casefold())
-              return len(summary) >= 30 and a != b and normalized not in (headline + source, source + headline)
-
+            a, b = fingerprint(summary), fingerprint(title)
+            normalized = re.sub(r"[^\w]+", "", summary.casefold())
+            headline = re.sub(r"[^\w]+", "", title.casefold())
+            source = re.sub(r"[^\w]+", "", publisher.casefold())
+            return len(summary) >= 30 and a != b and normalized not in (headline + source, source + headline)
           def normalize(value):
-              value = unicodedata.normalize("NFKC", value).casefold()
-              return " ".join(re.findall(r"[^\W_]+", value, re.UNICODE))
-
+            value = unicodedata.normalize("NFKC", value).casefold()
+            return " ".join(re.findall(r"[^\W_]+", value, re.UNICODE))
           def topic_key(title, summary):
-              t = normalize(title + " " + summary)
-              h = normalize(title)
-              franchise = ("metal slug", "メタルスラッグ", "合金弹头", "合金彈頭", "메탈슬러그", "메탈 슬러그", "ميتال سلغ", "ميتال سلاج", "ميتال سلاغ", "เมทัลสลัก", "เมทัล สลัก", "rambo lùn", "метал слаг")
-              movie = ("movie", "film", "película", "pelicula", "映画", "実写", "电影", "電影", "真人", "영화", "실사", "live action", "cine", "filme", "cinéma", "فيلم", "سينما", "phim", "ภาพยนตร์", "фильм", "кино", "verfilmung", "pellicola")
-              if any(x in t for x in franchise) and any(x in t for x in movie):
-                  new_detail = ("trailer", "teaser", "tráiler", "reparto confirmado", "casting", "cast revealed", "cast announced", "director announced", "fecha de estreno", "release date", "予告", "キャスト", "公開日", "预告", "預告", "演员阵容", "演員陣容", "上映日期", "예고편", "캐스팅", "개봉일", "data de estreia", "date de sortie", "bande annonce", "موعد العرض", "طاقم التمثيل", "الإعلان التشويقي", "ngày công chiếu", "วันฉาย", "tanggal rilis", "дата выхода", "трейлер", "starttermin", "data di uscita")
-                  if not any(x in h for x in new_detail):
-                      return "metal-slug-movie-writer"
-              return ""
-
+            t = normalize(title + " " + summary)
+            h = normalize(title)
+            franchise = ("metal slug", "メタルスラッグ", "合金弹头", "合金彈頭", "메탈슬러그", "메탈 슬러그", "ميتال سلغ", "ميتال سلاج", "ميتال سلاغ", "เมทัลสลัก", "เมทัล สลัก", "rambo lùn", "метал слаг")
+            movie = ("movie", "film", "película", "pelicula", "映画", "実写", "电影", "電影", "真人", "영화", "실사", "live action", "cine", "filme", "cinéma", "فيلم", "سينما", "phim", "ภาพยนตร์", "фильм", "кино", "verfilmung", "pellicola")
+            if any(x in t for x in franchise) and any(x in t for x in movie):
+              new_detail = ("trailer", "teaser", "tráiler", "reparto confirmado", "casting", "cast revealed", "cast announced", "director announced", "fecha de estreno", "release date", "予告", "キャスト", "公開日", "预告", "預告", "演员阵容", "演員陣容", "上映日期", "예고편", "캐스팅", "개봉일", "data de estreia", "date de sortie", "bande annonce", "موعد العرض", "طاقم التمثيل", "الإعلان التشويقي", "ngày công chiếu", "วันฉาย", "tanggal rilis", "дата выхода", "трейлер", "starttermin", "data di uscita")
+              if not any(x in h for x in new_detail):
+                return "metal-slug-movie-writer"
+            return ""
           topic_state = Path("published_topics.json")
           topics = json.loads(topic_state.read_text()) if topic_state.exists() else {}
           topics = {k: v for k, v in topics.items() if time.time() - v < 604800}
-          # The initial movie announcement was already published by v1.0/v1.1.
           if not control.get("v13_migrated"):
-              if seen and "metal-slug-movie-writer" not in topics:
-                  topics["metal-slug-movie-writer"] = time.time()
-                  topic_state.write_text(json.dumps(topics, indent=2))
-              control["v13_migrated"] = True
-              save_control()
-
+            if seen and "metal-slug-movie-writer" not in topics:
+              topics["metal-slug-movie-writer"] = time.time()
+              topic_state.write_text(json.dumps(topics, indent=2))
+            control["v13_migrated"] = True
+            save_control()
           recent_path = Path("recent_titles.json")
           recent = json.loads(recent_path.read_text()) if recent_path.exists() else []
           recent = [x for x in recent if time.time() - x["time"] < 172800][-300:]
-
           def similar_title(title):
-              t = normalize(title)
-              return len(t) >= 20 and any(
-                  SequenceMatcher(None, t, x["title"], autojunk=False).ratio() >= 0.88
-                  for x in recent
-              )
-
+            t = normalize(title)
+            return len(t) >= 20 and any(
+              SequenceMatcher(None, t, x["title"], autojunk=False).ratio() >= 0.88
+              for x in recent
+            )
           def suspicious_text(value):
-              if not value:
-                  return False
-              if "\ufffd" in value or re.search(r"[\x80-\x9f]", value):
-                  return True
-              # Detect common UTF-8 bytes misread as Latin-1/Windows-1252.
-              return len(re.findall(r"[ÃÂãæåçéäèïðì][\u0080-\u00bf\u2000-\u203f€™œŠšŽžŸ]", value)) >= 2
-
+            if not value:
+              return False
+            if "\ufffd" in value or re.search(r"[\x80-\x9f]", value):
+              return True
+            return len(re.findall(r"[ÃÂãæåçéäèïðì][\u0080-\u00bf\u2000-\u203f€™œŠšŽžŸ]", value)) >= 2
           def repair_text(value):
-              value = clean(value)
-              if not suspicious_text(value):
-                  return value
-              for encoding in ("cp1252", "latin-1"):
-                  try:
-                      repaired = value.encode(encoding).decode("utf-8")
-                      if not suspicious_text(repaired):
-                          return repaired
-                  except (UnicodeEncodeError, UnicodeDecodeError):
-                      pass
-              return ""
-
+            value = clean(value)
+            if not suspicious_text(value):
+              return value
+            for encoding in ("cp1252", "latin-1"):
+              try:
+                repaired = value.encode(encoding).decode("utf-8")
+                if not suspicious_text(repaired):
+                  return repaired
+              except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+            return ""
           def parse_html(response):
-              raw = response.content
-              # Prefer valid UTF-8 even when a server incorrectly reports Latin-1.
+            raw = response.content
+            try:
+              return BeautifulSoup(raw.decode("utf-8-sig"), "html.parser")
+            except UnicodeDecodeError:
+              pass
+            soup = BeautifulSoup(raw, "html.parser")
+            declared = re.search(r"charset\s*=\s*[\"']?([\w.-]+)", response.headers.get("Content-Type", ""), re.I)
+            has_meta = bool(re.search(br"<meta[^>]+charset\s*=", raw[:16384], re.I))
+            if declared and not has_meta:
               try:
-                  return BeautifulSoup(raw.decode("utf-8-sig"), "html.parser")
-              except UnicodeDecodeError:
-                  pass
-              # Let BeautifulSoup inspect the BOM and HTML charset declarations.
-              soup = BeautifulSoup(raw, "html.parser")
-              # A genuine HTTP charset can help when the HTML has no declaration.
-              declared = re.search(r"charset\s*=\s*[\"']?([\w.-]+)", response.headers.get("Content-Type", ""), re.I)
-              has_meta = bool(re.search(br"<meta[^>]+charset\s*=", raw[:16384], re.I))
-              if declared and not has_meta:
-                  try:
-                      decoded = raw.decode(declared.group(1))
-                      if not suspicious_text(decoded[:5000]):
-                          return BeautifulSoup(decoded, "html.parser")
-                  except (LookupError, UnicodeDecodeError):
-                      pass
-              if suspicious_text(soup.get_text(" ", strip=True)[:5000]):
-                  try:
-                      from charset_normalizer import from_bytes
-                      best = from_bytes(raw).best()
-                      if best and not suspicious_text(str(best)[:5000]):
-                          return BeautifulSoup(str(best), "html.parser")
-                  except Exception:
-                      pass
-              return soup
-
+                decoded = raw.decode(declared.group(1))
+                if not suspicious_text(decoded[:5000]):
+                  return BeautifulSoup(decoded, "html.parser")
+              except (LookupError, UnicodeDecodeError):
+                pass
+            if suspicious_text(soup.get_text(" ", strip=True)[:5000]):
+              try:
+                from charset_normalizer import from_bytes
+                best = from_bytes(raw).best()
+                if best and not suspicious_text(str(best)[:5000]):
+                  return BeautifulSoup(str(best), "html.parser")
+              except Exception:
+                pass
+            return soup
           def metadata(url):
-              response = session.get(url, timeout=15)
-              response.raise_for_status()
-              soup = parse_html(response)
-
-              def meta(*keys):
-                  for key in keys:
-                      tag = soup.find("meta", attrs={"property": key})
-                      if not tag:
-                          tag = soup.find("meta", attrs={"name": key})
-                      if tag and tag.get("content"):
-                          return tag["content"]
-                  return ""
-
-              image = meta("og:image:secure_url", "og:image", "twitter:image", "twitter:image:src")
-              if not image:
-                  tag = soup.find("link", rel="image_src")
-                  image = tag.get("href", "") if tag else ""
-              description = meta("og:description", "description", "twitter:description")
-              if not description:
-                  article = soup.find("article")
-                  if article:
-                      description = next((p.get_text(" ", strip=True) for p in article.find_all("p") if len(p.get_text(" ", strip=True)) >= 80), "")
-              return (
-                  meta("og:title", "twitter:title"),
-                  description,
-                  urljoin(response.url, image) if image else ""
-              )
-
+            response = session.get(url, timeout=15)
+            response.raise_for_status()
+            soup = parse_html(response)
+            def meta(*keys):
+              for key in keys:
+                tag = soup.find("meta", attrs={"property": key})
+                if not tag:
+                  tag = soup.find("meta", attrs={"name": key})
+                if tag and tag.get("content"):
+                  return tag["content"]
+              return ""
+            image = meta("og:image:secure_url", "og:image", "twitter:image", "twitter:image:src")
+            if not image:
+              tag = soup.find("link", rel="image_src")
+              image = tag.get("href", "") if tag else ""
+            description = meta("og:description", "description", "twitter:description")
+            if not description:
+              article = soup.find("article")
+              if article:
+                description = next((p.get_text(" ", strip=True) for p in article.find_all("p") if len(p.get_text(" ", strip=True)) >= 80), "")
+            return (
+              meta("og:title", "twitter:title"),
+              description,
+              urljoin(response.url, image) if image else ""
+            )
           candidates = []
-
           for source, url, google in feeds:
-              try:
-                  response = session.get(url, timeout=20)
-
-                  if response.status_code == 429:
-                      print("Rate limit:", source)
-                      if google:
-                          google_backoff()
-                          break
-                      continue
-
-                  response.raise_for_status()
-                  feed = feedparser.parse(response.content)
-                  print("Feed:", source, "entries=", len(feed.entries))
-
-                  for entry in feed.entries:
-                      title = repair_text(entry.get("title", ""))
-                      link = entry.get("link", "")
-                      summary = repair_text(entry.get("summary", ""))
-
-                      if not title or not link.startswith(("https://", "http://")):
-                          continue
-
-                      if not google and not any(
-                          k in (title + " " + summary).casefold()
-                          for k in keywords
-                      ):
-                          continue
-
-                      published = entry.get("published_parsed") or entry.get("updated_parsed")
-                      stamp = calendar.timegm(published) if published else 0
-
-                      if not stamp or time.time() - stamp > 172800:
-                          continue
-
-                      publisher = entry.get("source", {}).get("title", source)
-                      if google and title.endswith(" - " + publisher):
-                          title = title[:-(len(publisher) + 3)]
-
-                      key = fingerprint(title)
-                      if key in seen or similar_title(title):
-                          continue
-
-                      rss_image = ""
-                      if not google:
-                          for media in entry.get("media_content", []) + entry.get("media_thumbnail", []):
-                              if media.get("url") and media.get("medium", "image") == "image" and (not media.get("type") or media["type"].startswith("image/")):
-                                  rss_image = urljoin(link, media["url"])
-                                  break
-                      candidates.append((stamp, google, title, link, summary, publisher, key, rss_image))
-
-              except Exception as error:
-                  print("Feed error:", source, type(error).__name__)
-
-              time.sleep(3)
-
+            try:
+              response = session.get(url, timeout=20)
+              if response.status_code == 429:
+                print("Rate limit:", source)
+                if google:
+                  google_backoff()
+                  break
+                continue
+              response.raise_for_status()
+              feed = feedparser.parse(response.content)
+              print("Feed:", source, "entries=", len(feed.entries))
+              for entry in feed.entries:
+                title = repair_text(entry.get("title", ""))
+                link = entry.get("link", "")
+                summary = repair_text(entry.get("summary", ""))
+                if not title or not link.startswith(("https://", "http://")):
+                  continue
+                if not google and not any(
+                  k in (title + " " + summary).casefold()
+                  for k in keywords
+                ):
+                  continue
+                published = entry.get("published_parsed") or entry.get("updated_parsed")
+                stamp = calendar.timegm(published) if published else 0
+                if not stamp or time.time() - stamp > 172800:
+                  continue
+                publisher = entry.get("source", {}).get("title", source)
+                if google and title.endswith(" - " + publisher):
+                  title = title[:-(len(publisher) + 3)]
+                key = fingerprint(title)
+                if key in seen or similar_title(title):
+                  continue
+                rss_image = ""
+                if not google:
+                  for media in entry.get("media_content", []) + entry.get("media_thumbnail", []):
+                    if media.get("url") and media.get("medium", "image") == "image" and (not media.get("type") or media["type"].startswith("image/")):
+                      rss_image = urljoin(link, media["url"])
+                      break
+                candidates.append((stamp, google, title, link, summary, publisher, key, rss_image))
+            except Exception as error:
+              print("Feed error:", source, type(error).__name__)
+            time.sleep(3)
           candidates.sort(key=lambda x: (not x[1], x[0]), reverse=True)
           sent = 0
           attempts = 0
-
           for stamp, google, title, link, summary, publisher, key, rss_image in candidates:
-              if sent >= limit or attempts >= max_attempts:
-                  break
-
-              if key in seen:
+            if sent >= limit or attempts >= max_attempts:
+              break
+            if key in seen:
+              continue
+            topic = topic_key(title, summary)
+            if topic and topic in topics:
+              print("Skip similar event:", topic)
+              continue
+            attempts += 1
+            original = link
+            image = rss_image
+            try:
+              if google:
+                decoded = gnewsdecoder(link, interval=2, timeout=12)
+                resolved = decoded.get("decoded_url", "")
+                if not (decoded.get("success") or decoded.get("status")) or not resolved or not public_url(resolved) or is_google(resolved):
+                  print("Decode failed:", publisher, str(decoded.get("message", "unknown"))[:180])
+                  if "429" in str(decoded.get("message", "")):
+                    google_backoff()
+                    break
                   continue
-
-              topic = topic_key(title, summary)
-              if topic and topic in topics:
-                  print("Skip similar event:", topic)
-                  continue
-              attempts += 1
-              original = link
-              image = rss_image
-              try:
-                  if google:
-                      decoded = gnewsdecoder(link, interval=2, timeout=12)
-                      resolved = decoded.get("decoded_url", "")
-                      if not (decoded.get("success") or decoded.get("status")) or not resolved or not public_url(resolved) or is_google(resolved):
-                          print("Decode failed:", publisher, str(decoded.get("message", "unknown"))[:180])
-                          if "429" in str(decoded.get("message", "")):
-                              google_backoff()
-                              break
-                          continue
-                      original = resolved
-                      print("Decoded:", publisher)
-                  if not public_url(original):
-                      continue
-                  new_title, description, page_image = metadata(original)
-                  title = repair_text(new_title) or title
-                  description = repair_text(description)
-                  if useful_summary(description, title, publisher):
-                      summary = description
-                  image = page_image or image
-              except Exception as error:
-                  print("Metadata unavailable:", publisher, type(error).__name__)
-
-              extra_key = fingerprint(title)
-              url_key = fingerprint(canonical(original))
-              topic = topic or topic_key(title, summary)
-              if extra_key in seen or url_key in seen or fingerprint(original) in seen or similar_title(title) or (topic and topic in topics):
-                  continue
-              if not image or not public_url(image) or not useful_summary(summary, title, publisher) or is_google(original) or suspicious_text(title) or suspicious_text(summary):
-                  print("Skip incomplete:", publisher, "image=", bool(image), "description=", useful_summary(summary, title, publisher))
-                  continue
-              print("Ready:", publisher, "image=yes description=yes")
-
-              embed = {
-                  "title": title[:250],
-                  "url": original,
-                  "description": summary[:500] or "Consulta el artículo original.",
-                  "color": 16744448,
-                  "author": {"name": publisher[:200]},
-                  "footer": {"text": "Metal Slug Unity • News Network"},
-                  "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stamp))
-              }
-
-              if image.startswith(("https://", "http://")):
-                  embed["image"] = {"url": image}
-
-              try:
-                  response = requests.post(
-                      webhook,
-                      json={
-                          "embeds": [embed],
-                          "allowed_mentions": {"parse": []}
-                      },
-                      timeout=20
-                  )
-
-                  if response.status_code not in (200, 204):
-                      print("Discord HTTP:", response.status_code)
-                      break
-
-              except requests.RequestException:
-                  print("Discord connection error")
-                  break
-
-              seen.update([key, extra_key, url_key])
-              state.write_text(json.dumps(sorted(seen), indent=2))
-              if topic:
-                  topics[topic] = time.time()
-                  topic_state.write_text(json.dumps(topics, indent=2))
-              recent.append({"title": normalize(title), "time": time.time()})
-              recent_path.write_text(json.dumps(recent[-300:], ensure_ascii=False, indent=2))
-              sent += 1
-              time.sleep(3)
-
+                original = resolved
+                print("Decoded:", publisher)
+              if not public_url(original):
+                continue
+              new_title, description, page_image = metadata(original)
+              title = repair_text(new_title) or title
+              description = repair_text(description)
+              if useful_summary(description, title, publisher):
+                summary = description
+              image = page_image or image
+            except Exception as error:
+              print("Metadata unavailable:", publisher, type(error).__name__)
+            extra_key = fingerprint(title)
+            url_key = fingerprint(canonical(original))
+            topic = topic or topic_key(title, summary)
+            if extra_key in seen or url_key in seen or fingerprint(original) in seen or similar_title(title) or (topic and topic in topics):
+              continue
+            if not image or not public_url(image) or not useful_summary(summary, title, publisher) or is_google(original) or suspicious_text(title) or suspicious_text(summary):
+              print("Skip incomplete:", publisher, "image=", bool(image), "description=", useful_summary(summary, title, publisher))
+              continue
+            print("Ready:", publisher, "image=yes description=yes")
+            embed = {
+              "title": title[:250],
+              "url": original,
+              "description": summary[:500] or "Consulta el artículo original.",
+              "color": 16744448,
+              "author": {"name": publisher[:200]},
+              "footer": {"text": "Metal Slug Unity • News Network"},
+              "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stamp))
+            }
+            if image.startswith(("https://", "http://")):
+              embed["image"] = {"url": image}
+            try:
+              response = requests.post(
+                webhook,
+                json={
+                  "embeds": [embed],
+                  "allowed_mentions": {"parse": []}
+                },
+                timeout=20
+              )
+              if response.status_code not in (200, 204):
+                print("Discord HTTP:", response.status_code)
+                break
+            except requests.RequestException:
+              print("Discord connection error")
+              break
+            seen.update([key, extra_key, url_key])
+            state.write_text(json.dumps(sorted(seen), indent=2))
+            if topic:
+              topics[topic] = time.time()
+              topic_state.write_text(json.dumps(topics, indent=2))
+            recent.append({"title": normalize(title), "time": time.time()})
+            recent_path.write_text(json.dumps(recent[-300:], ensure_ascii=False, indent=2))
+            sent += 1
+            time.sleep(3)
           print("Published:", sent)
           PY
       - name: Save published history
@@ -426,4 +366,12 @@ jobs:
         run: |
           git config user.name "MSU News Engine"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          for file in published.json published_topics.json news_control.js
+          for file in published.json published_topics.json news_control.json recent_titles.json; do
+            if [ -f "$file" ]; then git add "$file"; fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "Update news history"
+            git push
+          fi
+# FIN MSU NEWS ENGINE v1.3.1
+
