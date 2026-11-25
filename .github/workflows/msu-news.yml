@@ -52,14 +52,7 @@ jobs:
           limit = 3
           max_attempts = 10
           session = requests.Session()
-          session.headers["User-Agent"] = "MSU-News-Engine/1.3"
-          keywords = [
-            "metal slug", "neo geo", "neogeo", "fbneo", "finalburn neo", "fightcade",
-            "メタルスラッグ", "ネオジオ", "合金弹头", "合金彈頭", "메탈슬러그", "메탈 슬러그",
-            "ميتال سلغ", "ميتال سلاج", "ميتال سلاغ", "ميتال سلق",
-            "เมทัลสลัก", "เมทัล สลัก", "метал слаг",
-            "rambo lùn",
-          ]
+          session.headers["User-Agent"] = "MSU-News-Engine/1.3.2"
           base = '"Metal Slug" OR "Neo Geo" OR "Fightcade" OR "FBNeo" OR "FinalBurn Neo"'
           regions = {
             "en": (base + ' OR (SNK (licensing OR acquisition OR partnership))', "en-US", "US", "US:en"),
@@ -137,6 +130,16 @@ jobs:
           def normalize(value):
             value = unicodedata.normalize("NFKC", value).casefold()
             return " ".join(re.findall(r"[^\W_]+", value, re.UNICODE))
+          def relevant(title, summary=""):
+            h, d = normalize(title), normalize(summary)
+            strong = r"(?<!\w)(?:metal slug|metalslug|neo geo|neogeo|fbneo|finalburn neo|final burn neo|fightcade|rambo lùn)(?!\w)"
+            native = ("メタルスラッグ", "ネオジオ", "合金弹头", "合金彈頭", "메탈슬러그", "메탈 슬러그", "ميتال سلغ", "ميتال سلاج", "ميتال سلاغ", "ميتال سلق", "เมทัลสลัก", "เมทัล สลัก", "метал слаг")
+            if re.search(strong, h) or any(x in h for x in native):
+              return True
+            if re.search(r"(?<!\w)snk(?!\w)", h):
+              context = ("licens", "acquisit", "partnership", "investment", "gaming", "video game", "king of fighters", "fatal fury", "licencia", "adquisici", "inversi", "videojuego", "jogos", "jeux", "spiele", "ゲーム", "契約", "買収", "提携", "投资", "投資", "收购", "收購", "게임", "인수", "투자", "استحواذ", "ترخيص", "شراكة", "ألعاب", "السعودية")
+              return any(x in h + " " + d for x in context) or bool(re.search(strong, d)) or any(x in d for x in native)
+            return False
           def topic_key(title, summary):
             t = normalize(title + " " + summary)
             h = normalize(title)
@@ -253,11 +256,6 @@ jobs:
                 summary = repair_text(entry.get("summary", ""))
                 if not title or not link.startswith(("https://", "http://")):
                   continue
-                if not google and not any(
-                  k in (title + " " + summary).casefold()
-                  for k in keywords
-                ):
-                  continue
                 published = entry.get("published_parsed") or entry.get("updated_parsed")
                 stamp = calendar.timegm(published) if published else 0
                 if not stamp or time.time() - stamp > 172800:
@@ -265,6 +263,8 @@ jobs:
                 publisher = entry.get("source", {}).get("title", source)
                 if google and title.endswith(" - " + publisher):
                   title = title[:-(len(publisher) + 3)]
+                if not relevant(title, summary):
+                  continue
                 key = fingerprint(title)
                 if key in seen or similar_title(title):
                   continue
@@ -315,6 +315,9 @@ jobs:
               image = page_image or image
             except Exception as error:
               print("Metadata unavailable:", publisher, type(error).__name__)
+            if not relevant(title, summary):
+              print("Skip unrelated article:", publisher, title[:120])
+              continue
             extra_key = fingerprint(title)
             url_key = fingerprint(canonical(original))
             topic = topic or topic_key(title, summary)
@@ -373,5 +376,4 @@ jobs:
             git commit -m "Update news history"
             git push
           fi
-# FIN MSU NEWS ENGINE v1.3.1
-
+# FIN MSU NEWS ENGINE v1.3.2
