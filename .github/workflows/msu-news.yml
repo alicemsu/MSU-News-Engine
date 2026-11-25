@@ -1,0 +1,253 @@
+
+name: MSU News Engine
+
+on:
+  schedule:
+    - cron: "13,43 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: msu-news
+  cancel-in-progress: false
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install requests feedparser beautifulsoup4 "selectolax<1" googlenewsdecoder==0.2.1
+
+      - name: MSU News Engine
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python <<'PY'
+          import os
+          import re
+          import json
+          import time
+          import hashlib
+          import calendar
+          import requests
+          import feedparser
+
+          from pathlib import Path
+          from bs4 import BeautifulSoup
+          from urllib.parse import urlencode, urljoin
+          from googlenewsdecoder import gnewsdecoder
+
+          webhook = os.environ["DISCORD_WEBHOOK_URL"]
+          if not webhook:
+              raise SystemExit("Missing Discord secret")
+
+          state = Path("published.json")
+          seen = set(json.loads(state.read_text())) if state.exists() else set()
+          limit = 3 if not state.exists() else 5
+
+          session = requests.Session()
+          session.headers["User-Agent"] = "MSU-News-Engine/1.0"
+
+          keywords = [
+              "metal slug", "neo geo", "neogeo",
+              "fbneo", "finalburn neo", "fightcade",
+              "snk", "メタルスラッグ", "合金弹头",
+              "合金彈頭", "메탈슬러그", "메탈 슬러그"
+          ]
+
+          feeds = [
+              ("Gematsu", "https://www.gematsu.com/feed", False),
+              ("Time Extension", "https://www.timeextension.com/feeds/news", False)
+          ]
+
+          searches = [
+              ('"Metal Slug" OR "Neo Geo" OR "Fightcade" OR "FBNeo"', "en-US", "US", "US:en"),
+              ('"Metal Slug" OR "Neo Geo"', "es-419", "MX", "MX:es-419"),
+              ('"メタルスラッグ"', "ja", "JP", "JP:ja"),
+              ('"合金弹头" OR "合金彈頭"', "zh-TW", "TW", "TW:zh-Hant"),
+              ('"메탈슬러그" OR "메탈 슬러그"', "ko", "KR", "KR:ko")
+          ]
+
+          for query, hl, gl, ceid in searches:
+              url = "https://news.google.com/rss/search?" + urlencode({
+                  "q": "(" + query + ") when:2d",
+                  "hl": hl,
+                  "gl": gl,
+                  "ceid": ceid
+              })
+              feeds.append(("Google News", url, True))
+
+          def clean(value):
+              return BeautifulSoup(value or "", "html.parser").get_text(" ", strip=True)
+
+          def fingerprint(value):
+              value = re.sub(r"[^\w]+", "", value.casefold())
+              return hashlib.sha256(value.encode()).hexdigest()
+
+          def metadata(url):
+              response = session.get(url, timeout=15)
+              response.raise_for_status()
+              soup = BeautifulSoup(response.text, "html.parser")
+
+              def meta(*keys):
+                  for key in keys:
+                      tag = soup.find("meta", attrs={"property": key})
+                      if not tag:
+                          tag = soup.find("meta", attrs={"name": key})
+                      if tag and tag.get("content"):
+                          return tag["content"]
+                  return ""
+
+              image = meta("og:image", "twitter:image")
+              return (
+                  meta("og:title", "twitter:title"),
+                  meta("og:description", "description", "twitter:description"),
+                  urljoin(response.url, image) if image else ""
+              )
+
+          candidates = []
+
+          for source, url, google in feeds:
+              try:
+                  response = session.get(url, timeout=20)
+
+                  if response.status_code == 429:
+                      print("Rate limit:", source)
+                      if google:
+                          break
+                      continue
+
+                  response.raise_for_status()
+                  feed = feedparser.parse(response.content)
+
+                  for entry in feed.entries:
+                      title = clean(entry.get("title", ""))
+                      link = entry.get("link", "")
+                      summary = clean(entry.get("summary", ""))
+
+                      if not title or not link.startswith(("https://", "http://")):
+                          continue
+
+                      if not google and not any(
+                          k in (title + " " + summary).casefold()
+                          for k in keywords
+                      ):
+                          continue
+
+                      published = entry.get("published_parsed") or entry.get("updated_parsed")
+                      stamp = calendar.timegm(published) if published else 0
+
+                      if not stamp or time.time() - stamp > 172800:
+                          continue
+
+                      publisher = entry.get("source", {}).get("title", source)
+                      if google and title.endswith(" - " + publisher):
+                          title = title[:-(len(publisher) + 3)]
+
+                      key = fingerprint(title)
+                      if key in seen:
+                          continue
+
+                      candidates.append((stamp, google, title, link, summary, publisher, key))
+
+              except Exception as error:
+                  print("Feed error:", source, type(error).__name__)
+
+              time.sleep(3)
+
+          candidates.sort(key=lambda x: (not x[1], x[0]), reverse=True)
+          sent = 0
+
+          for stamp, google, title, link, summary, publisher, key in candidates:
+              if sent >= limit:
+                  break
+
+              if key in seen:
+                  continue
+
+              original = link
+              image = ""
+
+              try:
+                  if google:
+                      decoded = gnewsdecoder(link, interval=2)
+                      if decoded.get("status"):
+                          original = decoded.get("decoded_url") or link
+
+                  if original != link or not google:
+                      new_title, description, image = metadata(original)
+                      title = new_title or title
+                      summary = description or summary
+
+              except Exception as error:
+                  print("Metadata unavailable:", type(error).__name__)
+
+              extra_key = fingerprint(title)
+              url_key = fingerprint(original)
+
+              if extra_key in seen or url_key in seen:
+                  continue
+
+              embed = {
+                  "title": title[:250],
+                  "url": original,
+                  "description": summary[:500] or "Consulta el artículo original.",
+                  "color": 16744448,
+                  "author": {"name": publisher[:200]},
+                  "footer": {"text": "Metal Slug Unity • News Network"},
+                  "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stamp))
+              }
+
+              if image.startswith(("https://", "http://")):
+                  embed["image"] = {"url": image}
+
+              try:
+                  response = requests.post(
+                      webhook,
+                      json={
+                          "embeds": [embed],
+                          "allowed_mentions": {"parse": []}
+                      },
+                      timeout=20
+                  )
+
+                  if response.status_code not in (200, 204):
+                      print("Discord HTTP:", response.status_code)
+                      break
+
+              except requests.RequestException:
+                  print("Discord connection error")
+                  break
+
+              seen.update([key, extra_key, url_key])
+              state.write_text(json.dumps(sorted(seen), indent=2))
+              sent += 1
+              time.sleep(3)
+
+          print("Published:", sent)
+          PY
+
+      - name: Save published history
+        if: always()
+        run: |
+          if [ -f published.json ]; then
+            git config user.name "MSU News Engine"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add published.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Update news history"
+              git push
+            fi
+          fi
+          
