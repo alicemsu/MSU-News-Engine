@@ -1,0 +1,87 @@
+name: MSU News Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests beautifulsoup4
+
+      - name: Test Metal Slug News
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python <<'PY'
+          import os
+          import requests
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
+
+          url = "https://nintenduo.com/pelicula-accion-real-metal-slug/"
+
+          r = requests.get(url, timeout=30)
+          r.raise_for_status()
+          soup = BeautifulSoup(r.content, "html.parser")
+
+          def meta(*keys):
+              for key in keys:
+                  tag = soup.find("meta", property=key)
+                  if not tag:
+                      tag = soup.find("meta", attrs={"name": key})
+                  if tag and tag.get("content"):
+                      return tag["content"]
+              return ""
+
+          title = meta("og:title", "twitter:title")
+          description = meta("og:description", "description")
+          image = meta("og:image", "twitter:image")
+
+          if not all([title, description, image]):
+              raise SystemExit("Article metadata incomplete")
+
+          image = urljoin(r.url, image)
+
+          embed = {
+              "title": title[:256],
+              "description": description[:500],
+              "url": url,
+              "color": 16744448,
+              "author": {"name": "Nintenduo"},
+              "image": {"url": image},
+              "footer": {
+                  "text": "Metal Slug Unity | TEST"
+              }
+          }
+
+          try:
+              response = requests.post(
+                  os.environ["DISCORD_WEBHOOK_URL"],
+                  params={"wait": "true"},
+                  json={
+                      "content": "🧪 MSU News Engine - Test",
+                      "embeds": [embed],
+                      "allowed_mentions": {"parse": []}
+                  },
+                  timeout=30
+              )
+          except requests.RequestException:
+              raise SystemExit("Discord connection failed")
+
+          print("Discord HTTP:", response.status_code)
+
+          if response.status_code != 200:
+              raise SystemExit("Publication failed")
+
+          print("TEST SUCCESS")
+          PY
